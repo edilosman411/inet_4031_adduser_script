@@ -1,32 +1,44 @@
 #!/usr/bin/python3
-# INET4031 – Automated Linux User Creation (dry-run toggle version)
+# INET4031 – Automated Linux User Creation (Dry-Run Toggle Version)
 # Author: Edil Osman
 # Date: 2025-11-12
 #
-# Reads colon-delimited user records from STDIN:
-#   username:password:last:first:group1,group2
-# Skips lines that start with '#'. Ignores lines not having exactly 5 fields.
-#
-# DRY-RUN TOGGLE:
-#   • Prompts: "Run in DRY-RUN mode (Y/N)?"
-#   • If Y: print the OS commands that would run; also print notes for bad/skip lines.
-#   • If N: actually execute the OS commands; stay quiet on bad/skip lines.
+# Purpose:
+# This Python 3 script automates adding multiple users and groups on an Ubuntu server.
+# It reads a colon-delimited text file (create-users.input) and creates accounts,
+# sets passwords, and assigns users to groups.  This version adds an interactive
+# “dry-run” toggle so the admin can preview commands before running them for real.
 
 import os
 import re
 import sys
 
-# ----- Ask user whether to dry-run -----
-dry = None
-while dry not in ("Y", "N"):
-    try:
-        dry = input("Run in DRY-RUN mode (Y/N)? ").strip().upper()
-    except EOFError:
-        # If input is redirected and prompt can't read (e.g., CI), default to safe DRY-RUN
-        dry = "Y"
+# ----- Ask user whether to dry-run (read from terminal, not stdin) -----
+def get_dry_setting():
+    # Allow environment override: DRY_RUN=Y or DRY_RUN=N
+    env = os.environ.get("DRY_RUN", "").strip().upper()
+    if env in ("Y", "N"):
+        return env
 
+    # Read from controlling terminal (so '< file' redirection won't block input)
+    try:
+        with open("/dev/tty") as tty:
+            while True:
+                print("Run in DRY-RUN mode (Y/N)? ", end="", flush=True)
+                ans = tty.readline()
+                if not ans:
+                    return "Y"      # default to safe mode if EOF
+                ans = ans.strip().upper()
+                if ans in ("Y", "N"):
+                    return ans
+    except Exception:
+        return "Y"  # fallback to safe dry-run
+
+dry = get_dry_setting()
+
+# Wrapper to either print or execute shell commands
 def run_cmd(cmd: str) -> int:
-    """Execute or print the command depending on dry-run setting."""
+    """Print command in dry-run mode; execute it in real mode."""
     if dry == "Y":
         print(f"DRY-RUN: {cmd}")
         return 0
@@ -36,40 +48,38 @@ def main():
     for raw in sys.stdin:
         line = raw.rstrip("\n")
 
-        # Skip comment lines using '#' at column 0
-        is_comment = re.match(r"^#", line) is not None
+        # Skip comment lines starting with '#'
+        match = re.match(r"^#", line)
 
-        # Expect: username:password:last:first:groups
+        # Split colon-separated fields
         fields = line.strip().split(':')
 
-        # Validate/skip
-        if is_comment or len(fields) != 5:
+        # If it's a comment or malformed, skip (and show messages in dry-run)
+        if match or len(fields) != 5:
             if dry == "Y":
-                if is_comment:
-                    print(f"DRY-RUN SKIP (comment): {line}")
+                if match:
+                    print(f"DRY-RUN SKIP (comment): {line.strip()}")
                 elif line.strip():
-                    print(f"DRY-RUN ERROR (bad line, need 5 fields): {line}")
+                    print(f"DRY-RUN ERROR (bad line, need 5 fields): {line.strip()}")
             continue
 
+        # Extract field values
         username = fields[0]
         password = fields[1]
-        # GECOS field for /etc/passwd ("First Last,,,")
-        gecos = f"{fields[3]} {fields[2]},,,"
-
-        # Comma-separated list of groups; '-' means no extra groups
+        gecos = f"{fields[3]} {fields[2]},,,"   # Full name, room, etc.
         groups = fields[4].split(',')
 
-        # 1) Create user (password disabled here; set next)
+        # Step 1 – Create user account
         print(f"==> Creating account for {username}...")
         cmd = f"/usr/sbin/adduser --disabled-password --gecos '{gecos}' {username}"
         run_cmd(cmd)
 
-        # 2) Set password (non-interactive)
+        # Step 2 – Set password
         print(f"==> Setting the password for {username}...")
         cmd = f"/bin/echo -ne '{password}\\n{password}' | /usr/bin/sudo /usr/bin/passwd {username}"
         run_cmd(cmd)
 
-        # 3) Add to supplemental groups
+        # Step 3 – Add to supplemental groups
         for group in groups:
             if group != '-':
                 print(f"==> Assigning {username} to the {group} group...")
