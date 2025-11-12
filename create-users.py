@@ -1,77 +1,62 @@
 #!/usr/bin/python3
-
-# INET4031
+# INET4031  –  Automated Linux User Creation
 # Author: Edil Osman
 # Date Created: 2025-11-12
-# Date Last Modified: 2025-11-12
+# Last Modified: 2025-11-12
 #
-# Purpose:
-# Read colon-delimited user records from STDIN (via input redirection) and
-# for each valid line, construct the OS commands to:
-#   1) create the user with a GECOS string (full name),
-#   2) set the user's password, and
-#   3) add the user to any requested groups.
+# Description:
+# Reads colon-delimited user records from STDIN and, for each valid record,
+# builds the system commands needed to:
+#   1) create the account,
+#   2) set the password, and
+#   3) assign group memberships.
 #
-# Dry-run vs. real-run:
-#   - For a dry-run, keep all os.system(...) calls commented out and only print the commands.
-#   - For a real run, uncomment the os.system(...) lines so commands actually execute.
+# Dry-run mode:
+#   • Keep os.system(...) lines commented to only print commands.
+# Real-run mode:
+#   • Uncomment os.system(...) lines so commands actually execute.
 
-import os   # used to invoke shell commands with os.system(...)
-import re   # used to detect comment/skip lines with a regular expression
-import sys  # used to read input lines from standard input (sys.stdin)
+import os    # to run Linux shell commands
+import re    # to detect comment lines that start with '#'
+import sys   # to read each line piped in from create-users.input
 
 def main():
     for line in sys.stdin:
-        # Skip lines that begin with '#' (treated as comments / disabled entries in the input file).
-        # The script uses this to allow “skip this user” markers without deleting the line.
+        # Skip comment lines beginning with '#'
         match = re.match(r"^#", line)
 
-        # Split the input line into fields separated by ':'.
-        # Expected layout: username:password:last:first:group_list
+        # Split the line into fields: username:password:last:first:groups
         fields = line.strip().split(':')
 
-        # Validate the record:
-        # - If the line is a comment (match is not None), skip it.
-        # - If the record doesn’t have exactly 5 fields, skip it (prevents crashes on bad data).
-        # This relies on the match check above and the result of the split we just did.
+        # Skip any invalid or incomplete line (not exactly 5 fields)
         if match or len(fields) != 5:
             continue
 
-        # Map fields into variables and format a GECOS string.
-        # /etc/passwd stores the “gecos” field for human-friendly info. Here we put "First Last,,,"
-        # so that the account has a full name visible in tools that read gecos.
+        # Extract user info and format the GECOS string
         username = fields[0]
         password = fields[1]
-        gecos = "%s %s,,," % (fields[3], fields[2])   # first last,,,
+        gecos = "%s %s,,," % (fields[3], fields[2])   # first last
 
-        # The 5th field is a comma-delimited list of groups. A single '-' means “no extra groups”.
+        # Parse comma-separated group list; '-' means “no extra groups”
         groups = fields[4].split(',')
 
-        # 1) Create the user account with --disabled-password (we will set the password next)
-        #    and attach the GECOS string.
-        print("==> Creating account for %s..." % (username))
-        cmd = "/usr/sbin/adduser --disabled-password --gecos '%s' %s" % (gecos, username)
-        # DRY-RUN: keep the next line commented so we only print the command
-        # REAL-RUN: uncomment the next line so the command executes
-        # os.system(cmd)
+        # Step 1 – create user account
+        print(f"==> Creating account for {username}...")
+        cmd = f"/usr/sbin/adduser --disabled-password --gecos '{gecos}' {username}"
+        # os.system(cmd)   # Uncomment for real run
 
-        # 2) Set the user’s password by piping two lines (password + password) into passwd.
-        #    This mirrors an interactive password change non-interactively.
-        print("==> Setting the password for %s..." % (username))
-        cmd = "/bin/echo -ne '%s\n%s' | /usr/bin/sudo /usr/bin/passwd %s" % (password, password, username)
-        # DRY-RUN: keep commented
-        # REAL-RUN: uncomment to execute
-        # os.system(cmd)
+        # Step 2 – set password
+        print(f"==> Setting the password for {username}...")
+        cmd = f"/bin/echo -ne '{password}\\n{password}' | /usr/bin/sudo /usr/bin/passwd {username}"
+        # os.system(cmd)   # Uncomment for real run
 
-        # 3) Process supplemental groups. If the group token is '-', skip adding to groups.
+        # Step 3 – assign to groups (if any)
         for group in groups:
-            # Only add the user to a group when the token is not the sentinel '-'.
-            if group != '-':
-                print("==> Assigning %s to the %s group..." % (username, group))
-                cmd = "/usr/sbin/adduser %s %s" % (username, group)
-                # DRY-RUN: keep commented
-                # REAL-RUN: uncomment to execute
-                # os.system(cmd)
+            if group != '-':   # skip placeholder
+                print(f"==> Assigning {username} to the {group} group...")
+                cmd = f"/usr/sbin/adduser {username} {group}"
+                # os.system(cmd)   # Uncomment for real run
 
 if __name__ == '__main__':
     main()
+
